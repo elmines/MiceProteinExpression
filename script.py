@@ -36,19 +36,22 @@ def convert_nan(iterable):
     return np.asarray( [num_type(0) if "nan" in str(element).lower() else num_type(element) for element in iterable] )
 
 def tf_dataset(dataframe, label_column, label_dict):
-    labels = np.asarray([ label_dict[class_name] for class_name in dataframe[label_column] ], dtype=num_type)
+
+    #labels = np.asarray([ label_dict[class_name] for class_name in dataframe[label_column] ], dtype=num_type)
+
+    labels = np.zeros( (len(dataframe), len(label_dict)), dtype=num_type)
+    for i in range(len(dataframe)):
+        index = label_dict[ dataframe[label_column].iloc[i] ]
+        labels[i][index] = 1
+
+
     dataframe = dataframe[ list(set(dataframe.columns) - {label_column}) ]
 
-    #features = np.ndarray( (len(dataframe), len(dataframe.columns)) , dtype=num_type )
-    #for i in range(len(dataframe.columns)):
-        #features[ : , i] = convert_nan( dataframe[dataframe.columns[i]] )
-
-    features = np.ndarray( (len(dataframe), 1, len(dataframe.columns)) , dtype=num_type )
+    features = np.ndarray( (len(dataframe), len(dataframe.columns)) , dtype=num_type )
     for i in range(len(dataframe.columns)):
-        features[ : , 0, i] = convert_nan( dataframe[dataframe.columns[i]] )
+        features[ : , i] = convert_nan( dataframe[dataframe.columns[i]] )
 
-    print(features.shape)
-
+    #print(features.shape)
 
     dataset = tf.data.Dataset.from_tensor_slices( (features, labels) )
     return dataset
@@ -57,21 +60,23 @@ def tf_dataset(dataframe, label_column, label_dict):
 
 label_dict = {label : i for (i, label) in enumerate( set(train_df["class"]) ) }
 short_df = train_df.iloc[:96]
-train_dataset = tf_dataset(short_df, "class", label_dict) #.batch(1)
 
+train_batch_size = 32
+train_dataset = tf_dataset(short_df, "class", label_dict).batch(train_batch_size)
 
-#input_dim = int(train_dataset.output_shapes[0][0])
-input_dim = 77
+input_dim = int(train_dataset.output_shapes[0][1])
 output_dim = len(label_dict)
-
 def keras_model():
     return tf.keras.Sequential([
       tf.keras.layers.Dense(30, activation="relu", input_shape=(input_dim,)), 
-      #tf.keras.layers.Dense(30, activation="relu", input_shape=(input_dim,)),
       tf.keras.layers.Dense(30, activation="relu"),
+      #tf.keras.layers.Dense(output_dim)
       tf.keras.layers.Dense(output_dim, activation="softmax")
     ])
 
+def one_hot_vector(num_clases, indices):
+    vector = np.zeros(size, dtype=num_type)
+    vector[index] = 1
 
 def cross_entropy_loss(y_hat, y, axis=1):
     loss = -tf.reduce_sum( tf.log(y_hat) * y, axis=axis )
@@ -90,14 +95,12 @@ loss = cross_entropy_loss(model, y_hat, y)
 def running_average(curr_avg, num_samples, new_sample):
     return ( curr_avg * num_samples + new_sample) / (num_samples + 1)
 
-iterator = train_dataset.make_one_shot_iterator()
-#iterator = train_dataset.make_initializable_iterator()
-next_element = iterator.get_next()
 
 model = keras_model()
-
-optimizer = tf.train.GradientDescentOptimizer(learning_rate=0.01)
+iterator = train_dataset.make_one_shot_iterator()
+next_element = iterator.get_next()
 loss_value = loss(model, next_element[0], next_element[1])
+optimizer = tf.train.GradientDescentOptimizer(learning_rate=0.01)
 train_op = optimizer.minimize(loss_value)
 
 with tf.Session() as sess:
