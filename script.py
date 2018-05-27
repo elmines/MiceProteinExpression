@@ -15,13 +15,14 @@ tf.set_random_seed(seed)
 num_type = np.float64
 tf_num_type = tf.as_dtype(num_type)
 
+# HYPERPARAMETERS
 #Minibatch Descent Hyperparameters
 minibatch_descent = False
 train_batch_size = 64 #Only used if minibatch_descent is True
 
 batch_ratio = 0.5 #Let each batch compose half the dataset
 
-valid_batch_size = 32
+valid_batch_size = None #Initialize to total number of validation samples later
 num_epochs = 100
 
 
@@ -38,16 +39,19 @@ df = df.iloc[np.random.permutation(len(df))] #Shuffle samples
 
 #Partition dataset - 80% training, 10% validation, %10 testing
 num_samples = len(df)
-num_training = num_samples * 8 // 10
+num_train = num_samples * 8 // 10
 if not minibatch_descent: # Scale batch sizes according to dataset size
-    train_batch_size = int(num_training * batch_ratio) if batch_ratio else num_training
+    train_batch_size = int(num_train * batch_ratio) if batch_ratio else num_train
 
-num_validation = num_samples // 10
-num_testing = num_samples - num_training - num_validation
-train_df = df.iloc[ :num_training ]
-validation_df = df.iloc[ num_training : num_training + num_validation ]
-test_df = df.iloc[ num_training + num_validation : ]
-print("{0} samples: {1} training, {2} validation, {3} testing".format(num_samples, num_training, num_validation, num_testing), flush=True)
+num_valid = num_samples // 10
+valid_batch_size = num_valid
+
+num_testing = num_samples - num_train - num_valid
+
+train_df = df.iloc[ :num_train ]
+valid_df = df.iloc[ num_train : num_train + num_valid ]
+test_df = df.iloc[ num_train + num_valid : ]
+print("{0} samples: {1} training, {2} validation, {3} testing".format(num_samples, num_train, num_valid, num_testing), flush=True)
 
 
 
@@ -71,6 +75,7 @@ def tf_dataset(dataframe, label_column, label_dict):
 
 label_dict = {label : i for (i, label) in enumerate( set(train_df["class"]) ) }
 train_dataset = tf_dataset(train_df, "class", label_dict).batch(train_batch_size)
+valid_dataset = tf_dataset(valid_df, "class", label_dict).batch(valid_batch_size)
 test_dataset = tf_dataset(test_df, "class", label_dict).batch(1)
 
 input_dim = int(train_dataset.output_shapes[0][1])
@@ -87,31 +92,42 @@ def cross_entropy_loss(y_hat, y):
     return -tf.reduce_sum( tf.log(y_hat) * y, axis=1 )
 def loss(model, x, y):
     return cross_entropy_loss(model(x), y)
-def classification_accuracy(model, x, y):
-     return tf.argmax( model(x), axis=1) == tf.argmax( y, axis = 1)
-
-
-iterator = tf.data.Iterator.from_structure(train_dataset.output_types, train_dataset.output_shapes)
-training_init_op = iterator.make_initializer(train_dataset)
-next_element = iterator.get_next()
+def classification_error(model, x, y):
+     return tf.argmax( model(x), axis=1) != tf.argmax( y, axis = 1)
 
 model = keras_model()
-loss_value = loss(model, next_element[0], next_element[1])
-optimizer = tf.train.GradientDescentOptimizer(learning_rate=0.01)
-train_op = optimizer.minimize(loss_value)
-batch_loss = tf.reduce_mean(loss_value)
 
+# Training tensors
+train_iterator = tf.data.Iterator.from_structure(train_dataset.output_types, train_dataset.output_shapes)
+train_init_op = train_iterator.make_initializer(train_dataset)
+train_features, train_labels = train_iterator.get_next()
+train_loss = loss(model, train_features, train_labels)
+optimizer = tf.train.GradientDescentOptimizer(learning_rate=0.01)
+train_op = optimizer.minimize(train_loss)
+train_batch_loss = tf.reduce_mean(train_loss)
+
+"""
+# Validation tensors
+valid_iterator = tf.data.Iterator.from_structure(valid_dataset.output_types, valid_dataset.output_shapes)
+valid_init_op = valid_iterator.make_initializer(valid_dataset)
+valid_features, valid_labels = valid_iterator.get_next()
+valid_loss = loss(model, valid_features, valid_labels)
+valid_batch_loss = tf.reduce_mean(valid_loss)
+"""
 
 def num_batches(num_samples, batch_size):
     return num_samples // batch_size + (0 if num_samples % batch_size == 0 else 1)
 
-train_batches = num_batches(num_training, train_batch_size)
-print("Training on %d samples divided into batches of %d" % (num_training, train_batches))
+train_batches = num_batches(num_train, train_batch_size)
+print("Training on %d samples divided into batches of %d" % (num_train, train_batch_size))
 with tf.Session() as sess:
     sess.run( tf.global_variables_initializer() )
     for epoch in range(num_epochs):
-        sess.run( training_init_op )
+        sess.run( train_init_op )
         print("EPOCH {0}".format(epoch))
         for i in range(train_batches):
-            [batch_loss_output, _] = sess.run( [batch_loss, train_op] )
-            print("\tBatch {0}: Average loss = {1}".format(i, batch_loss_output), flush=True)
+            [train_batch_loss_output, _] = sess.run( [train_batch_loss, train_op] )
+            print("\tBatch {0}: Average loss = {1}".format(i, train_batch_loss_output), flush=True)
+        #sess.run(valid_init_op)
+        #valid_batch_loss_output = sess.run( valid_batch_loss )
+        #print("\tValidation loss = {0}".format(valid_batch_loss_output, flush=True))
